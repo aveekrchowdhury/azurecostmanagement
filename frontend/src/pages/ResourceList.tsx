@@ -1,12 +1,15 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { RefreshCw, Search, Loader2, Tag as TagIcon, CheckCircle } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
 import resourcesApi from '../api/resources'
 import type { ResourceClassification } from '../types'
 
 export default function ResourceList() {
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedResources, setSelectedResources] = useState<string[]>([])
+  const [searchParams] = useSearchParams()
+  const level1Filter = searchParams.get('level1') || ''
   const queryClient = useQueryClient()
 
   const { data: resources, isLoading: resourcesLoading } = useQuery<ResourceClassification[]>({
@@ -15,8 +18,10 @@ export default function ResourceList() {
   })
 
   const { data: classifications, isLoading: classificationsLoading } = useQuery<ResourceClassification[]>({
-    queryKey: ['classifications'],
-    queryFn: () => resourcesApi.getClassifications(),
+    queryKey: ['classifications', level1Filter],
+    queryFn: () => resourcesApi.getClassifications({
+      level1: level1Filter || undefined,
+    }),
   })
 
   const discoverMutation = useMutation({
@@ -36,14 +41,20 @@ export default function ResourceList() {
     },
   })
 
-  const filteredResources = resources?.filter((resource) =>
-    resource.resourceName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    resource.resourceType.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    resource.resourceGroup.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  const filteredResources = resources
+    ?.filter((resource) => {
+      const lookupResourceId = resource.resourceId ?? resource.id
+      if (!level1Filter) return true
+      return classifications?.some((c) => c.resourceId === lookupResourceId || c.id === lookupResourceId)
+    })
+    .filter((resource) =>
+      resource.resourceName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      resource.resourceType.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      resource.resourceGroup.toLowerCase().includes(searchTerm.toLowerCase())
+    )
 
   const getClassificationForResource = (resourceId: string): ResourceClassification | undefined => {
-    return classifications?.find((c) => c.resourceId === resourceId)
+    return classifications?.find((c) => c.resourceId === resourceId || c.id === resourceId)
   }
 
   const handleSelectAll = () => {
@@ -76,6 +87,14 @@ export default function ResourceList() {
           <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
             Manage and classify your Azure resources
           </p>
+          {level1Filter && (
+            <p className="mt-1 text-sm text-primary-700 dark:text-primary-400">
+              Showing resources for Workload Level 1: <span className="font-semibold">{level1Filter}</span>{' '}
+              <Link to="/resources" className="underline">
+                Clear filter
+              </Link>
+            </p>
+          )}
         </div>
         <div className="flex gap-3">
           <button
@@ -146,18 +165,19 @@ export default function ResourceList() {
             </thead>
             <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
               {filteredResources?.map((resource) => {
-                const classification = getClassificationForResource(resource.id)
+                const lookupResourceId = resource.resourceId ?? resource.id
+                const classification = getClassificationForResource(lookupResourceId)
                 return (
                   <tr key={resource.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
                     <td className="px-6 py-4">
                       <input
                         type="checkbox"
-                        checked={selectedResources.includes(resource.id)}
+                        checked={selectedResources.includes(lookupResourceId)}
                         onChange={() => {
                           setSelectedResources((prev) =>
-                            prev.includes(resource.id)
-                              ? prev.filter((id) => id !== resource.id)
-                              : [...prev, resource.id]
+                            prev.includes(lookupResourceId)
+                              ? prev.filter((id) => id !== lookupResourceId)
+                              : [...prev, lookupResourceId]
                           )
                         }}
                         className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"

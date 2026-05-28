@@ -402,15 +402,31 @@ class CosmosDBService:
                 parameters=parameters,
                 enable_cross_partition_query=True
             ))
+
+            by_level_1: Dict[str, int] = {}
+            by_level_2: Dict[str, int] = {}
+            for r in results:
+                level_1 = r.get("level_1")
+                if level_1:
+                    by_level_1[level_1] = by_level_1.get(level_1, 0) + 1
+
+                level_2 = r.get("level_2")
+                if level_2:
+                    by_level_2[level_2] = by_level_2.get(level_2, 0) + 1
             
             # Compute statistics in Python
             stats = {
                 "total": len(results),
+                "totalResources": len(results),
+                "classified": len(results),
                 "pending": sum(1 for r in results if r.get("status") == "pending"),
                 "approved": sum(1 for r in results if r.get("status") == "approved"),
                 "rejected": sum(1 for r in results if r.get("status") == "rejected"),
                 "applied": sum(1 for r in results if r.get("status") == "applied"),
-                "failed": sum(1 for r in results if r.get("status") == "failed")
+                "failed": sum(1 for r in results if r.get("status") == "failed"),
+                "byLevel1": by_level_1,
+                "byLevel2": by_level_2,
+                "recentActivity": []
             }
             
             return stats

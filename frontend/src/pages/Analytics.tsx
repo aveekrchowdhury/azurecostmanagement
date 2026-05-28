@@ -1,12 +1,63 @@
 import { useQuery } from '@tanstack/react-query'
-import { Loader2, TrendingUp, PieChart as PieChartIcon } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import resourcesApi from '../api/resources'
+
+const LEVEL_1_COLORS = ['#2563eb', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#be123c']
+const LEVEL_2_COLORS = [
+  '#0ea5e9', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444',
+  '#14b8a6', '#84cc16', '#f97316', '#6366f1', '#ec4899'
+]
+
+type Slice = {
+  label: string
+  count: number
+  percent: number
+  color: string
+}
+
+function buildSlices(data: Record<string, number>, palette: string[], maxItems?: number): Slice[] {
+  const entries = Object.entries(data || {})
+    .filter(([, count]) => count > 0)
+    .sort((a, b) => b[1] - a[1])
+
+  const slicedEntries = maxItems ? entries.slice(0, maxItems) : entries
+  const total = slicedEntries.reduce((sum, [, count]) => sum + count, 0)
+
+  if (total === 0) return []
+
+  return slicedEntries.map(([label, count], idx) => ({
+    label,
+    count,
+    percent: (count / total) * 100,
+    color: palette[idx % palette.length],
+  }))
+}
+
+function pieGradient(slices: Slice[]): string {
+  if (slices.length === 0) return 'conic-gradient(#e5e7eb 0deg 360deg)'
+
+  let running = 0
+  const segments = slices.map((slice) => {
+    const start = running
+    const end = running + (slice.percent * 3.6)
+    running = end
+    return `${slice.color} ${start}deg ${end}deg`
+  })
+
+  return `conic-gradient(${segments.join(', ')})`
+}
 
 export default function Analytics() {
   const { data: stats, isLoading } = useQuery({
     queryKey: ['stats'],
     queryFn: resourcesApi.getStats,
   })
+
+  const legacyStats = stats as (typeof stats & {
+    by_level_1?: Record<string, number>
+    by_level_2?: Record<string, number>
+  }) | undefined
 
   if (isLoading) {
     return (
@@ -22,21 +73,11 @@ export default function Analytics() {
   const pendingCount = stats?.pending ?? 0
   const approvedCount = stats?.approved ?? 0
   const appliedCount = stats?.applied ?? 0
-  const failedCount = stats?.failed ?? 0
+  const byLevel1 = stats?.byLevel1 ?? legacyStats?.by_level_1 ?? {}
+  const byLevel2 = stats?.byLevel2 ?? legacyStats?.by_level_2 ?? {}
 
-  // Approved resources may transition to applied/failed, so include them in approval lineage.
-  const approvedLineageCount = approvedCount + appliedCount + failedCount
-  const reviewedCount = Math.max(classifiedCount - pendingCount, 0)
-
-  const classificationRate = totalResources > 0
-    ? ((classifiedCount / totalResources) * 100).toFixed(1)
-    : '0'
-  const approvalRate = reviewedCount > 0
-    ? ((approvedLineageCount / reviewedCount) * 100).toFixed(1)
-    : '0'
-  const applicationRate = approvedLineageCount > 0
-    ? ((appliedCount / approvedLineageCount) * 100).toFixed(1)
-    : '0'
+  const level1Slices = buildSlices(byLevel1, LEVEL_1_COLORS)
+  const level2Slices = buildSlices(byLevel2, LEVEL_2_COLORS, 10)
 
   return (
     <div className="space-y-6">
@@ -47,122 +88,73 @@ export default function Analytics() {
         </p>
       </div>
 
-      {/* Metrics Cards */}
-      <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
-        <div className="card">
-          <div className="flex items-center">
-            <div className="flex-shrink-0 rounded-md bg-blue-100 dark:bg-blue-900/20 p-3">
-              <TrendingUp className="h-6 w-6 text-blue-600" />
+      {/* Level 1 Pie */}
+      <div className="card">
+        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
+          Workload Level 1 Classification
+        </h3>
+          {level1Slices.length === 0 ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400">No Level 1 data available.</p>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-[220px,1fr] items-center">
+              <div className="mx-auto h-52 w-52 rounded-full relative" style={{ background: pieGradient(level1Slices) }}>
+                <div className="absolute inset-10 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center border border-gray-200 dark:border-gray-700">
+                  <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">L1</span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {level1Slices.map((slice) => (
+                  <div key={slice.label} className="flex items-center justify-between gap-3 text-sm">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: slice.color }} />
+                      <Link
+                        to={`/resources?level1=${encodeURIComponent(slice.label)}`}
+                        className="text-primary-700 dark:text-primary-400 hover:underline truncate"
+                        title={`Show ${slice.label} resources`}
+                      >
+                        {slice.label}
+                      </Link>
+                    </div>
+                    <span className="text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                      {slice.count} ({slice.percent.toFixed(1)}%)
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="ml-5 w-0 flex-1">
-              <dt className="truncate text-sm font-medium text-gray-500 dark:text-gray-400">
-                Classification Rate
-              </dt>
-              <dd className="text-3xl font-semibold text-gray-900 dark:text-white">
-                {classificationRate}%
-              </dd>
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="flex items-center">
-            <div className="flex-shrink-0 rounded-md bg-green-100 dark:bg-green-900/20 p-3">
-              <PieChartIcon className="h-6 w-6 text-green-600" />
-            </div>
-            <div className="ml-5 w-0 flex-1">
-              <dt className="truncate text-sm font-medium text-gray-500 dark:text-gray-400">
-                Approval Rate
-              </dt>
-              <dd className="text-3xl font-semibold text-gray-900 dark:text-white">
-                {approvalRate}%
-              </dd>
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="flex items-center">
-            <div className="flex-shrink-0 rounded-md bg-purple-100 dark:bg-purple-900/20 p-3">
-              <TrendingUp className="h-6 w-6 text-purple-600" />
-            </div>
-            <div className="ml-5 w-0 flex-1">
-              <dt className="truncate text-sm font-medium text-gray-500 dark:text-gray-400">
-                Application Rate
-              </dt>
-              <dd className="text-3xl font-semibold text-gray-900 dark:text-white">
-                {applicationRate}%
-              </dd>
-            </div>
-          </div>
-        </div>
+          )}
       </div>
 
-      {/* Detailed Breakdown */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        {/* Level 1 Breakdown */}
-        <div className="card">
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
-            Workload Level 1 Breakdown
-          </h3>
-          <div className="space-y-4">
-            {stats?.byLevel1 && Object.entries(stats.byLevel1).map(([level, count]) => {
-              const percentage = totalResources > 0 ? (count / totalResources * 100).toFixed(1) : '0'
-              return (
-                <div key={level} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                      {level}
-                    </span>
-                    <span className="text-sm text-gray-500 dark:text-gray-400">
-                      {count} ({percentage}%)
-                    </span>
-                  </div>
-                  <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
-                    <div
-                      className="bg-gradient-to-r from-primary-500 to-primary-600 h-3 rounded-full transition-all duration-300"
-                      style={{ width: `${percentage}%` }}
-                    />
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* Level 2 Top Categories */}
+      {/* Level 2 Pie */}
         <div className="card">
           <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
             Top 10 Level 2 Categories
           </h3>
-          <div className="space-y-4">
-            {stats?.byLevel2 && Object.entries(stats.byLevel2)
-              .sort((a, b) => b[1] - a[1])
-              .slice(0, 10)
-              .map(([level, count]) => {
-                const percentage = totalResources > 0 ? (count / totalResources * 100).toFixed(1) : '0'
-                return (
-                  <div key={level} className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                        {level}
-                      </span>
-                      <span className="text-sm text-gray-500 dark:text-gray-400">
-                        {count} ({percentage}%)
-                      </span>
+          {level2Slices.length === 0 ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400">No Level 2 data available.</p>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-[220px,1fr] items-center">
+              <div className="mx-auto h-52 w-52 rounded-full relative" style={{ background: pieGradient(level2Slices) }}>
+                <div className="absolute inset-10 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center border border-gray-200 dark:border-gray-700">
+                  <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">L2 Top 10</span>
+                </div>
+              </div>
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {level2Slices.map((slice) => (
+                  <div key={slice.label} className="flex items-center justify-between gap-3 text-sm">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: slice.color }} />
+                      <span className="text-gray-700 dark:text-gray-300 truncate">{slice.label}</span>
                     </div>
-                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                      <div
-                        className="bg-gradient-to-r from-green-500 to-green-600 h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${percentage}%` }}
-                      />
-                    </div>
+                    <span className="text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                      {slice.count} ({slice.percent.toFixed(1)}%)
+                    </span>
                   </div>
-                )
-              })}
-          </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-      </div>
 
       {/* Status Pipeline */}
       <div className="card">
